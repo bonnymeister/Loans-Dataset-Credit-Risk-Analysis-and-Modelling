@@ -1,0 +1,335 @@
+/* Generated Code (IMPORT) */
+/* Source File: loans_dataset.xlsx */
+/* Source Path: /home/u64150328/Forecasting and CRA/Data */
+/* Code generated on: 03/05/2025 23:32 */
+
+%web_drop_table(FCRASAS.Loans);
+
+
+FILENAME REFFILE '/home/u64150328/Forecasting and CRA/Data/loans_dataset.xlsx';
+
+PROC IMPORT DATAFILE=REFFILE
+	DBMS=XLSX
+	OUT=FCRASAS.Loans;
+	GETNAMES=YES;
+RUN;
+
+PROC CONTENTS DATA=FCRASAS.Loans; RUN;
+
+
+%web_open_table(FCRASAS.Loans);
+
+*Sorting the data by Default status****************************************************;
+proc sort data=fcrasas.Loans;
+	by Default_status; 
+run;
+
+Title 'Loans Total Data';
+proc freq data=fcrasas.loans;
+table Default_status;
+quit;
+
+ods graphics on;
+
+proc print data=fcrasas.loans;
+run;
+
+***Exploratory Data Analysis***********************************************************;
+/*Age*/
+proc univariate data=fcrasas.loans;
+var age;
+histogram age;
+qqplot age;
+run;
+
+Title 'Age Box Plot';
+proc sgplot data=fcrasas.loans;
+vbox age;
+/*xaxis label='Age';*/
+run;
+quit;
+/*proc means data=fcrasas.loans
+N min max mean median mode q1 q3 std var maxdec=2;
+var age;
+run;
+
+proc freq data=fcrasas.loans;
+tables age;
+run;*/
+
+/*Net Income*/
+	proc univariate data=fcrasas.loans;
+		var net_income;
+		qqplot net_income;
+	run;
+	
+	proc means data=fcrasas.loans
+		N min max mean median mode q1 q3 std var maxdec=2;
+		var net_income;
+	quit;
+
+/*Employment length*/
+	proc univariate data=fcrasas.loans;
+		var emp_years;
+		histogram emp_years;
+	quit;
+	
+	proc means data=fcrasas.loans
+		N min max mean median mode q1 q3 std var maxdec=0;
+		var emp_years;
+	quit;
+
+/*Home Ownership*/
+	proc sgplot data=fcrasas.loans;
+		styleattrs datacolors=(red blue green);
+		vbar home_ownership / barwidth=0.3 groupdisplay=cluster group=home_ownership;
+	run;
+	
+	proc freq data=fcrasas.loans;
+		table home_ownership;
+	quit;
+
+/*Debt-to-Income Ratio*/
+	proc means data=fcrasas.loans
+		N min max mean median q1 q3 maxdec=3;
+		var debt_inc_ratio;
+	run;
+	
+	proc univariate data=fcrasas.loans;
+		var debt_inc_ratio;
+		histogram debt_inc_ratio;
+	quit;
+
+	proc univariate data=fcrasas.loans;
+		var debt_inc_ratio;
+		qqplot debt_inc_ratio;
+	run;
+
+/*Loan Duration*/
+	proc means data= fcrasas.loans
+		N min max mean mode q1 q3  maxdec=0;
+		var loan_duration;
+	run;
+
+
+***Checking for Correlation and Collinearity**********;
+	proc sql;
+		create table fcrasas.loansmod as
+			select
+			Age, Debt_Inc_Ratio, Emp_Years, Loan_Duration, Net_Income,
+			case 	/*transforming Home_Ownership into a numerical variable*/
+				when Home_Ownership='Renter' then 1
+				when Home_Ownership='Other' then 2
+				when Home_Ownership='Owner' then 3
+			end as Home_Ownership label='Home_Ownership',
+			Default_Status
+		from fcrasas.loans;
+	run;
+	
+	
+	proc corr data=fcrasas.loansmod plots= scatter;
+		var Debt_Inc_Ratio Emp_Years Home_Ownership Loan_Duration Net_Income Age Default_status;
+		with Debt_Inc_Ratio Emp_Years Home_Ownership  Loan_Duration Net_Income Age Default_status;
+	run;
+	
+	proc reg data=fcrasas.loansmod;
+		model Default_status = Debt_Inc_Ratio Emp_Years Home_Ownership Loan_Duration Net_Income Age / collin;
+	run;
+
+***Bivariate Analysis***********************************************************;
+/*Continuous variables*/
+%Macro  BivariateCont(VarX=,n=);
+
+data fcrasas.loans_bivar;
+set fcrasas.loans_bivar;
+if &VarX.=. then &VarX.=9999;
+run;
+
+proc sort data=fcrasas.loans_bivar;
+by &VarX.;
+run;
+
+
+proc fastclus noprint data=fcrasas.loans_bivar out=clust_&n. /*converge=0*/ maxclusters=12
+/*MAXITER=200 REPLACE=FULL*/ nomiss;
+      var &VarX.;
+run;
+
+data clust_&n.;
+ set clust_&n. (keep=&VarX. Cluster Default_status);
+run;
+
+Proc Sql NOPRINT;create table Report_clust_&n. as
+			 		   Select &VarX. as Var,
+					    Cluster,
+						Default_status,
+					   	Count(* )   as Total,
+						  sum(Default_status=1)  	as Total_Bads, 
+			              sum(Default_status=0 )	as Total_Goods
+					from  clust_&n.
+;
+Quit;
+
+Proc Sql NOPRINT;create table SUM_Report_Final_&n. as
+			 		   Select Cluster,
+					   Total,
+					   Total_Bads,
+					   Total_Goods,
+					   	Count(* )   as N_Class,
+						Min(Var) as Min , 
+						  Max(Var) as Max , 
+						  sum(Default_status=1)/Total_Bads*100  as PCT_B   format=5.2 ,
+                          sum(Default_status=0)/Total_Goods*100  as PCT_G   format=5.2,
+			 		      sum(Default_status=1)  	as Bads, 
+			              sum(Default_status=0 )	as Goods,
+						  log((sum(Default_status=0)/Total_Goods)/(sum(Default_status=1)/Total_Bads))  as WOE,
+                         (calculated PCT_G - calculated PCT_B)*(calculated Woe)   as IVi,
+                         (calculated N_Class)/total*100 as pct_obs
+					from   Report_clust_&n.
+					    Group by Cluster
+   						;
+					Quit;
+proc sort data=SUM_Report_Final_&n. /*out=Report_clust_nd&n.*/ nodupkey;
+by Min;
+quit;
+
+proc export data=SUM_Report_Final_&n.
+outfile="/home/u64150328/Forecasting and CRA/ExportData/SUM_VarCateg_Final_&n..csv"
+dbms=csv
+replace;
+run;
+
+%mend BivariateCont;
+%BivariateCont(VarX=IDClient,n=1);
+%BivariateCont(VarX=Age,n=2);
+%BivariateCont(VarX=Net_Income,n=3);
+%BivariateCont(VarX=Emp_Years,n=4);
+%BivariateCont(VarX=Debt_Inc_Ratio,n=5);
+%BivariateCont(VarX=Loan_Duration,n=6);
+
+
+
+/*Categorial variables*/
+%Macro  BivariateCategorical(VarX=,n=);
+
+Proc Sql NOPRINT;create table Report_Bivar_&n. as
+			 		   Select &VarX. as Var,
+					    Default_status,
+					   	Count(* )   as Total,
+						  sum(Default_status=1)  	as Total_Bads, 
+			              sum(Default_status=0 )	as Total_Goods
+					from  fcrasas.loans_bivar;
+;
+Quit;
+
+Proc Sql NOPRINT;create table SUM_Report_Final_&n. as
+			 		   Select Var,
+					   Total,
+					   Total_Bads,
+					   Total_Goods,
+					   	Count(* )   as N_Class,
+						(calculated N_Class)/total*100 as perct_obs,
+						  sum(Default_status=1)/Total_Bads*100  as PCT_B   format=5.2 ,
+                          sum(Default_status=0)/Total_Goods*100  as PCT_G   format=5.2,
+			 		      sum(Default_status=1)  	as Bads, 
+			              sum(Default_status=0 )	as Goods,
+						  log((sum(Default_status=0)/Total_Goods)/(sum(Default_status=1)/Total_Bads))  as WOE,
+                         (calculated PCT_G - calculated PCT_B)*(calculated Woe)   as IVi,
+                         (calculated N_Class)/total*100 as pct_obs
+					from   Report_Bivar_&n.	
+					group by Var
+					;
+					Quit;
+
+proc sort data=SUM_Report_Final_&n. /*out=Report_clust_nd&n.*/ nodupkey;
+by WoE;
+quit;
+
+proc export data=SUM_Report_Final_&n.
+outfile="/home/u64150328/Forecasting and CRA/ExportData/SUM_VarCateg_Final_&n..csv"
+dbms=csv
+replace;
+run;
+
+%mend BivariateCategorical;
+%BivariateCategorical(VarX=Home_Ownership,n=1);
+
+
+***Weight of Evidence*****************************************************;
+Data fcrasas.loans_WOE;
+
+Set fcrasas.loans;
+
+IF Debt_Inc_Ratio <0.326 THEN WoE_DIR =-0.259338543550954 ;Else
+IF Debt_Inc_Ratio >=0.326 AND Debt_Inc_Ratio <0.68  THEN WoE_DIR =0.217064505237828 ;Else
+IF Debt_Inc_Ratio >=0.68 THEN WoE_DIR =0.733969175080201 ;
+
+IF Emp_Years =9999 THEN WoE_Emp_Years =0.224768247041212; Else
+IF Emp_Years <3 THEN WoE_Emp_Years =-0.418480476220235;Else
+IF Emp_Years >=3 AND Emp_Years<10 THEN WoE_Emp_Years =0.0723206615796261;Else
+IF Emp_Years >=10 THEN WoE_Emp_Years =1.0277862360995;
+
+IF Home_Ownership IN ('Renter') THEN WoE_Home =-0.430245137106651;Else
+IF Home_Ownership IN ('Other') THEN WoE_Home =-0.221036068974645;Else
+IF Home_Ownership IN ('Owner') THEN WoE_Home =1.20753787049043;
+
+IF Loan_Duration <4 THEN WoE_LoanD = 0.322773392263051;Else
+IF Loan_Duration >=4 AND Loan_Duration <6 THEN WoE_LoanD = 0.226313126075489;Else
+IF Loan_Duration >=6 THEN WoE_LoanD = -0.214409871345455;
+
+IF Net_Income < 24171 THEN WoE_Income = -0.238173634719848;Else
+IF Net_Income >= 24171 AND Net_Income < 32758 THEN WoE_Income = 0.266020575670601;Else
+IF Net_Income >= 32758 THEN WoE_Income = 0.543615446588982;
+
+IF Age < 23 THEN WoE_Age = 0.390866308687012;Else
+IF Age >= 23 AND AGE < 25 THEN WoE_Age = 0.167054084663166;Else
+IF Age >=25 THEN WoE_Age = -0.0620724286423776;
+
+
+
+***Logistic Regression**********************************************;
+TITLE;
+TITLE1 "Logistic Regression";
+FOOTNOTE;
+FOOTNOTE1 "scoring models";
+
+PROC LOGISTIC DATA=fcrasas.loans_WOE descending
+		PLOTS(ONLY)=ALL
+	;
+	MODEL Default_status=WoE_DIR WoE_Emp_Years WoE_Home WoE_LoanD WoE_Income WoE_Age
+/ OUTROC=ROC
+		SELECTION=stepwise
+		SLE=0.1
+		SLS=0.1
+		INCLUDE=0
+		CORRB
+		CTABLE
+		PPROB=(0.5)
+		Scale=pearson
+		RSQUARE
+		LACKFIT
+		LINK=LOGIT
+		CLPARM=WALD
+		CLODDS=WALD
+		ALPHA=0.05	;
+
+
+				ODS OUTPUT ParameterEstimates=Beta;
+			    ODS OUTPUT ASSOCIATION=STAT_TABLE  ;
+			    OUTPUT OUT=PREDICTED  PREDPROB=(INDIVIDUAL)
+	  
+		DFBETAS=_ALL_
+		XBETA=xbeta__Target
+		RESCHI=reschi__Target
+		RESDEV=resdev__Target
+		DIFCHISQ=difchisq__Target
+		DIFDEV=difdev__Target;
+RUN;
+QUIT;
+
+
+TITLE; FOOTNOTE;
+
+***************************************************************************
+
+
